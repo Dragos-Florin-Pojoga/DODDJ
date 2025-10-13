@@ -1,0 +1,26 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(gdb) Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/Debug/DODDJ",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "text": "-enable-pretty-printing"
+                },
+                {
+                    "text": "-gdb-set disassembly-flavor intel"
+                }
+            ],
+            "preLaunchTask": "build_debug"
+        }
+    ]
+}
