@@ -92,7 +92,7 @@ namespace Logging {
         const char* level_str = get_level_string(level);
 
         std::ostringstream oss;
-        oss << get_timestamp() << " " << color << level_str << " (" << file << ":" << line << ") " << Colors::RESET;
+        oss << color << get_timestamp() << " " << level_str << " (" << file << ":" << line << ") " << Colors::RESET;
 
         log_print_parts(oss, args...);
 

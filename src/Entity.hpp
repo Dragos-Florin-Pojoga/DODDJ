@@ -8,20 +8,20 @@
 #include <stack>
 
 struct Entity {
-    u16 id;
+    u32 id;
     constexpr Entity() : id(0) {}
-    constexpr explicit Entity(u16 val) : id(val) {}
+    constexpr explicit Entity(u32 val) : id(val) {}
     constexpr bool operator==(const Entity& other) const { return id == other.id; }
-    constexpr bool operator==(u16 other) const { return id == other; }
+    constexpr bool operator==(u32 other) const { return id == other; }
     constexpr bool operator!=(const Entity& other) const { return id != other.id; }
-    constexpr operator u16() const { return id; }
+    constexpr operator u32() const { return id; }
 };
 
 namespace std {
     template <>
     struct hash<Entity> {
         size_t operator()(const Entity& e) const {
-            return std::hash<u16>{}(e.id);
+            return std::hash<u32>{}(e.id);
         }
     };
 }
