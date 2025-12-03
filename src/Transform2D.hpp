@@ -2,12 +2,13 @@
 
 #include <SDL3/SDL.h>
 
+#include "Logging.hpp"
 #include "Vec2D.hpp"
 
 // Coordinate space for operations
 enum class Space {
-    Self, // Apply operation relative to the transform's local coordinate system 
-    World, // Apply operation relative to the world coordinate system 
+    Self,  // Apply operation relative to the transform's local coordinate system
+    World, // Apply operation relative to the world coordinate system
 };
 
 struct Transform2D {
@@ -18,9 +19,7 @@ public:
 
     Transform2D() : position(Vec2D::zero), rotation(0.0f), scale(Vec2D::one) {}
 
-    Transform2D(const Vec2D& pos, const Vec2D& scl = Vec2D::one, float rot = 0.0f)
-        : position(pos), scale(scl), rotation(rot)
-    {}
+    Transform2D(const Vec2D& pos, const Vec2D& scl = Vec2D::one, float rot = 0.0f) : position(pos), scale(scl), rotation(rot) {}
 
     void Translate(const Vec2D& translation, Space relativeTo = Space::Self) {
         if (relativeTo == Space::World) {
@@ -33,9 +32,7 @@ public:
     }
 
     // Rotates by 'degrees' around its center (to the right)
-    void Rotate(float degrees) {
-        rotation += degrees;
-    }
+    void Rotate(float degrees) { rotation += degrees; }
 
     // Normalizes rotation to [0, 360) degrees
     void NormalizeRotation() {

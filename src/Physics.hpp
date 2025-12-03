@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "Commons.hpp"
-#include "Transform2D.hpp"
-#include "Entity.hpp"
 #include "ComponentStore.hpp"
+#include "Entity.hpp"
+#include "Transform2D.hpp"
 
 struct Rigidbody2D {
     bool is_static = false;
@@ -48,9 +48,9 @@ struct Broadphase {
 struct BruteForceBroadphase : public Broadphase {
     std::vector<std::pair<Entity, Entity>> collectPairs(const std::vector<Entity>& candidates) override {
         std::vector<std::pair<Entity, Entity>> pairs;
-        pairs.reserve((candidates.size() * (candidates.size()-1)) / 2);
+        pairs.reserve((candidates.size() * (candidates.size() - 1)) / 2);
         for (size_t i = 0; i < candidates.size(); ++i) {
-            for (size_t j = i+1; j < candidates.size(); ++j) {
+            for (size_t j = i + 1; j < candidates.size(); ++j) {
                 pairs.emplace_back(candidates[i], candidates[j]);
             }
         }
@@ -61,10 +61,7 @@ struct BruteForceBroadphase : public Broadphase {
 struct QuadtreeBroadphase : public Broadphase {
     struct AABB {
         Vec2D min, max;
-        bool overlaps(const AABB& other) const {
-            return !(max.x < other.min.x || min.x > other.max.x ||
-                     max.y < other.min.y || min.y > other.max.y);
-        }
+        bool overlaps(const AABB& other) const { return !(max.x < other.min.x || min.x > other.max.x || max.y < other.min.y || min.y > other.max.y); }
     };
 
     struct Node {
@@ -82,13 +79,11 @@ struct QuadtreeBroadphase : public Broadphase {
     ComponentStore<CircleCollider>* circles;
     ComponentStore<BoxCollider>* boxes;
 
-    QuadtreeBroadphase(ComponentStore<Transform2D>* t,
-                      ComponentStore<CircleCollider>* c,
-                      ComponentStore<BoxCollider>* b)
-        : transforms(t), circles(c), boxes(b) {}
+    QuadtreeBroadphase(ComponentStore<Transform2D>* t, ComponentStore<CircleCollider>* c, ComponentStore<BoxCollider>* b) : transforms(t), circles(c), boxes(b) {}
 
     std::vector<std::pair<Entity, Entity>> collectPairs(const std::vector<Entity>& candidates) override {
-        if (candidates.empty()) return {};
+        if (candidates.empty())
+            return {};
         // Compute world bounds
         AABB world = computeWorldAABB(candidates);
         Node root(world, 0);
@@ -136,7 +131,8 @@ struct QuadtreeBroadphase : public Broadphase {
             node->entities.push_back(e);
             return;
         }
-        if (node->isLeaf()) split(node);
+        if (node->isLeaf())
+            split(node);
         for (int i = 0; i < 4; ++i) {
             if (node->children[i]->bounds.overlaps(aabb)) {
                 insert(node->children[i].get(), e, aabb);
@@ -147,10 +143,10 @@ struct QuadtreeBroadphase : public Broadphase {
     void split(Node* node) {
         Vec2D c = (node->bounds.min + node->bounds.max) * 0.5f;
         Vec2D min = node->bounds.min, max = node->bounds.max;
-        node->children[0] = std::make_unique<Node>(AABB{min, c}, node->depth+1); // TL
-        node->children[1] = std::make_unique<Node>(AABB{{c.x, min.y}, {max.x, c.y}}, node->depth+1); // TR
-        node->children[2] = std::make_unique<Node>(AABB{{min.x, c.y}, {c.x, max.y}}, node->depth+1); // BL
-        node->children[3] = std::make_unique<Node>(AABB{c, max}, node->depth+1); // BR
+        node->children[0] = std::make_unique<Node>(AABB{min, c}, node->depth + 1);                     // TL
+        node->children[1] = std::make_unique<Node>(AABB{{c.x, min.y}, {max.x, c.y}}, node->depth + 1); // TR
+        node->children[2] = std::make_unique<Node>(AABB{{min.x, c.y}, {c.x, max.y}}, node->depth + 1); // BL
+        node->children[3] = std::make_unique<Node>(AABB{c, max}, node->depth + 1);                     // BR
         // Re-insert entities
         auto old = node->entities;
         node->entities.clear();
@@ -167,7 +163,7 @@ struct QuadtreeBroadphase : public Broadphase {
     void collectPairsRecursive(Node* node, std::vector<std::pair<Entity, Entity>>& pairs) {
         // Brute-force pairs in this node
         for (size_t i = 0; i < node->entities.size(); ++i) {
-            for (size_t j = i+1; j < node->entities.size(); ++j) {
+            for (size_t j = i + 1; j < node->entities.size(); ++j) {
                 pairs.emplace_back(node->entities[i], node->entities[j]);
             }
         }
@@ -182,27 +178,18 @@ struct QuadtreeBroadphase : public Broadphase {
 
 class PhysicsSystem {
 public:
-    PhysicsSystem(ComponentStore<Transform2D>& transforms,
-                  ComponentStore<Rigidbody2D>& rigidbodies,
-                  ComponentStore<CircleCollider>& circles,
-                  ComponentStore<BoxCollider>& boxes,
-                  float fixed_dt = 1.0f/60.0f)
-        : m_transforms(transforms),
-          m_rigidbodies(rigidbodies),
-          m_circles(circles),
-          m_boxes(boxes),
-          m_fixed_dt(fixed_dt),
-          m_broadphase(std::make_unique<QuadtreeBroadphase>(&transforms, &circles, &boxes))
-    {}
+    PhysicsSystem(ComponentStore<Transform2D>& transforms, ComponentStore<Rigidbody2D>& rigidbodies, ComponentStore<CircleCollider>& circles, ComponentStore<BoxCollider>& boxes,
+                  float fixed_dt = 1.0f / 60.0f)
+        : m_transforms(transforms), m_rigidbodies(rigidbodies), m_circles(circles), m_boxes(boxes), m_fixed_dt(fixed_dt),
+          m_broadphase(std::make_unique<QuadtreeBroadphase>(&transforms, &circles, &boxes)) {}
 
-    void setBroadphase(std::unique_ptr<Broadphase> bp) {
-        m_broadphase = std::move(bp);
-    }
+    void setBroadphase(std::unique_ptr<Broadphase> bp) { m_broadphase = std::move(bp); }
 
     void update(float dt) {
         m_accumulator += dt;
         const float maxAccum = m_fixed_dt * 5.0f;
-        if (m_accumulator > maxAccum) m_accumulator = maxAccum;
+        if (m_accumulator > maxAccum)
+            m_accumulator = maxAccum;
 
         collectActiveEntities();
 
@@ -233,7 +220,7 @@ private:
         m_active_entities.clear();
         const auto& rb_entities = m_rigidbodies.all_entities();
         for (Entity e : rb_entities) {
-            if (m_rigidbodies.has(e) && !m_rigidbodies.get(e)->is_sleeping && m_transforms.has(e) && (m_circles.has(e) || m_boxes.has(e)))  {
+            if (m_rigidbodies.has(e) && !m_rigidbodies.get(e)->is_sleeping && m_transforms.has(e) && (m_circles.has(e) || m_boxes.has(e))) {
                 m_active_entities.push_back(e);
             }
         }
@@ -253,10 +240,10 @@ private:
         for (Entity e : m_active_entities) {
             Rigidbody2D* rb = m_rigidbodies.get(e);
             Transform2D* tr = m_transforms.get(e);
-            
-            if (rb->is_static || rb->invMass == 0.0f) { 
-                rb->force = Vec2D::zero; 
-                continue; 
+
+            if (rb->is_static || rb->invMass == 0.0f) {
+                rb->force = Vec2D::zero;
+                continue;
             }
 
             float mass = 1.0f / rb->invMass;
@@ -277,13 +264,13 @@ private:
                 rb->sleep_timer = 0.0f; // Reset timer if moving
             }
         }
-        
-        m_active_entities.erase(std::remove_if(m_active_entities.begin(), m_active_entities.end(),
-            [this](Entity e) {
-                Rigidbody2D* rb = m_rigidbodies.get(e);
-                return rb->is_sleeping;
-            }), m_active_entities.end());
 
+        m_active_entities.erase(std::remove_if(m_active_entities.begin(), m_active_entities.end(),
+                                               [this](Entity e) {
+                                                   Rigidbody2D* rb = m_rigidbodies.get(e);
+                                                   return rb->is_sleeping;
+                                               }),
+                                m_active_entities.end());
 
         // 2) Broadphase generate pairs
         auto pairs = m_broadphase->collectPairs(m_active_entities);
@@ -291,30 +278,34 @@ private:
         // 3) Narrow-phase: compute contacts
         std::vector<Manifold> manifolds;
         manifolds.reserve(64);
-        for (auto &p : pairs) {
+        for (auto& p : pairs) {
             Entity a = p.first;
             Entity b = p.second;
 
             Manifold m = computeManifold(a, b);
-            if (m.colliding) manifolds.push_back(m);
+            if (m.colliding)
+                manifolds.push_back(m);
         }
 
         // 4) Resolve collisions (impulses)
-        for (auto &m : manifolds) {
+        for (auto& m : manifolds) {
             resolveCollision(m);
         }
 
         // 5) Positional correction (prevent sinking)
-        for (auto &m : manifolds) {
+        for (auto& m : manifolds) {
             positionalCorrection(m);
         }
     }
 
     // Narrow-phase dispatcher
     Manifold computeManifold(Entity a, Entity b) {
-        if (m_circles.has(a) && m_circles.has(b)) return circleVsCircle(a, b);
-        if (m_boxes.has(a) && m_boxes.has(b)) return boxVsBox(a, b);
-        if (m_circles.has(a) && m_boxes.has(b)) return circleVsBox(a, b);
+        if (m_circles.has(a) && m_circles.has(b))
+            return circleVsCircle(a, b);
+        if (m_boxes.has(a) && m_boxes.has(b))
+            return boxVsBox(a, b);
+        if (m_circles.has(a) && m_boxes.has(b))
+            return circleVsBox(a, b);
         if (m_boxes.has(a) && m_circles.has(b)) {
             Manifold m = circleVsBox(b, a);
             // reverse normal because circleVsBox assumed circle is first
@@ -333,14 +324,18 @@ private:
         Transform2D* tb = m_transforms.get(b);
         CircleCollider* ca = m_circles.get(a);
         CircleCollider* cb = m_circles.get(b);
-        if (!ta || !tb || !ca || !cb) return m;
+        if (!ta || !tb || !ca || !cb)
+            return m;
 
         Vec2D pa = ta->position + ca->offset;
         Vec2D pb = tb->position + cb->offset;
         Vec2D n = pb - pa;
         float r = ca->radius + cb->radius;
-        float dist2 = n.x*n.x + n.y*n.y;
-        if (dist2 > r*r) { m.colliding = false; return m; }
+        float dist2 = n.x * n.x + n.y * n.y;
+        if (dist2 > r * r) {
+            m.colliding = false;
+            return m;
+        }
 
         float dist = std::sqrt(dist2);
         if (dist != 0.0f) {
@@ -358,12 +353,15 @@ private:
 
     // box-box (AABB) using full extents
     Manifold boxVsBox(Entity a, Entity b) {
-        Manifold m; m.a = a; m.b = b;
+        Manifold m;
+        m.a = a;
+        m.b = b;
         Transform2D* ta = m_transforms.get(a);
         Transform2D* tb = m_transforms.get(b);
         BoxCollider* ba = m_boxes.get(a);
         BoxCollider* bb = m_boxes.get(b);
-        if (!ta || !tb || !ba || !bb) return m;
+        if (!ta || !tb || !ba || !bb)
+            return m;
 
         // treating size as half-extents
         Vec2D aMin = ta->position + ba->offset - ba->size;
@@ -372,9 +370,11 @@ private:
         Vec2D bMax = tb->position + bb->offset + bb->size;
 
         float overlapX = std::min(aMax.x, bMax.x) - std::max(aMin.x, bMin.x);
-        if (overlapX <= 0.0f) return m;
+        if (overlapX <= 0.0f)
+            return m;
         float overlapY = std::min(aMax.y, bMax.y) - std::max(aMin.y, bMin.y);
-        if (overlapY <= 0.0f) return m;
+        if (overlapY <= 0.0f)
+            return m;
 
         m.colliding = true;
         // choose smallest axis for normal
@@ -392,12 +392,15 @@ private:
 
     // circle vs AABB (box)
     Manifold circleVsBox(Entity circleE, Entity boxE) {
-        Manifold m; m.a = circleE; m.b = boxE;
+        Manifold m;
+        m.a = circleE;
+        m.b = boxE;
         Transform2D* tc = m_transforms.get(circleE);
         Transform2D* tb = m_transforms.get(boxE);
         CircleCollider* cc = m_circles.get(circleE);
         BoxCollider* bc = m_boxes.get(boxE);
-        if (!tc || !tb || !cc || !bc) return m;
+        if (!tc || !tb || !cc || !bc)
+            return m;
 
         // All these values are now in METERS
         Vec2D circlePos = tc->position + cc->offset;
@@ -408,7 +411,7 @@ private:
         Vec2D min = boxPos - half;
         Vec2D max = boxPos + half;
         Vec2D closest = circlePos.Clamped(min, max); // Clamps circlePos to be within the box bounds
-        Vec2D n_outward = circlePos - closest; // Vector from closest point on box OUT to circle center
+        Vec2D n_outward = circlePos - closest;       // Vector from closest point on box OUT to circle center
         float dist2 = n_outward.MagnitudeSquared();
 
         if (dist2 > (cc->radius * cc->radius)) {
@@ -421,29 +424,33 @@ private:
 
         if (dist != 0.0f) {
             // Case 1: Circle center is outside or on the box edge
-            m.normal = (n_outward / dist) * -1.0f; 
+            m.normal = (n_outward / dist) * -1.0f;
             m.penetration = cc->radius - dist;
         } else {
             // Case 2: Circle center is inside the box (dist == 0)
             float dx = circlePos.x - boxPos.x;
             float dy = circlePos.y - boxPos.y;
-            
+
             float penetrationX = half.x - std::abs(dx);
             float penetrationY = half.y - std::abs(dy);
-            
+
             if (penetrationX < penetrationY) {
                 m.penetration = penetrationX + cc->radius; // circle edge to box edge
-                if (dx > 0) m.normal = Vec2D::right;
-                else m.normal = Vec2D::left;
+                if (dx > 0)
+                    m.normal = Vec2D::right;
+                else
+                    m.normal = Vec2D::left;
             } else {
                 m.penetration = penetrationY + cc->radius;
-                if (dy > 0) m.normal = Vec2D::down;
-                else m.normal = Vec2D::up;
+                if (dy > 0)
+                    m.normal = Vec2D::down;
+                else
+                    m.normal = Vec2D::up;
             }
             // from box center *towards* circle. i.e. B -> A
             m.normal = m.normal * -1.0f;
         }
-        
+
         return m;
     }
 
@@ -453,52 +460,70 @@ private:
         Rigidbody2D* B = m_rigidbodies.get(m.b);
         Transform2D* TA = m_transforms.get(m.a);
         Transform2D* TB = m_transforms.get(m.b);
-        if (!A || !B || !TA || !TB) return;
-        if (!m.colliding) return;
-        if (A->is_static && B->is_static) return;
+        if (!A || !B || !TA || !TB)
+            return;
+        if (!m.colliding)
+            return;
+        if (A->is_static && B->is_static)
+            return;
 
         // Ensure moving objects wake up sleeping static/kinematic objects
-        if (!A->is_static) wakeEntity(m.a); else wakeEntity(m.b);
-        if (!B->is_static) wakeEntity(m.b); else wakeEntity(m.a);
+        if (!A->is_static)
+            wakeEntity(m.a);
+        else
+            wakeEntity(m.b);
+        if (!B->is_static)
+            wakeEntity(m.b);
+        else
+            wakeEntity(m.a);
 
         Vec2D rv = B->velocity - A->velocity;
         float velAlongNormal = rv.Dot(m.normal);
 
-        if (velAlongNormal > 0.0f || std::abs(velAlongNormal) < 0.001f) return;
+        if (velAlongNormal > 0.0f || std::abs(velAlongNormal) < 0.001f)
+            return;
 
         float e = std::min(A->restitution, B->restitution);
         float invMassA = A->invMass;
         float invMassB = B->invMass;
         float j = -(1.0f + e) * velAlongNormal;
         float invMassSum = invMassA + invMassB;
-        if (invMassSum == 0.0f) return;
+        if (invMassSum == 0.0f)
+            return;
         j /= invMassSum;
 
         Vec2D impulse = m.normal * j;
-        if (!A->is_static) A->velocity -= impulse * invMassA;
-        if (!B->is_static) B->velocity += impulse * invMassB;
+        if (!A->is_static)
+            A->velocity -= impulse * invMassA;
+        if (!B->is_static)
+            B->velocity += impulse * invMassB;
     }
 
     // positional correction to avoid sinking
     void positionalCorrection(const Manifold& m) {
         const float percent = 0.25f; // 20% - 80%
-        const float slop = 0.05f; // penetration allowance
-        if (m.penetration <= slop) return;
+        const float slop = 0.05f;    // penetration allowance
+        if (m.penetration <= slop)
+            return;
 
         Rigidbody2D* A = m_rigidbodies.get(m.a);
         Rigidbody2D* B = m_rigidbodies.get(m.b);
         Transform2D* TA = m_transforms.get(m.a);
         Transform2D* TB = m_transforms.get(m.b);
-        if (!A || !B || !TA || !TB) return;
+        if (!A || !B || !TA || !TB)
+            return;
 
         float invMassA = A->invMass;
         float invMassB = B->invMass;
         float invMassSum = invMassA + invMassB;
-        if (invMassSum == 0.0f) return;
+        if (invMassSum == 0.0f)
+            return;
 
-        Vec2D correction = m.normal * ( (std::max(m.penetration - slop, 0.0f) / invMassSum) * percent );
+        Vec2D correction = m.normal * ((std::max(m.penetration - slop, 0.0f) / invMassSum) * percent);
 
-        if (!A->is_static) TA->position -= correction * invMassA;
-        if (!B->is_static) TB->position += correction * invMassB;
+        if (!A->is_static)
+            TA->position -= correction * invMassA;
+        if (!B->is_static)
+            TB->position += correction * invMassB;
     }
 };

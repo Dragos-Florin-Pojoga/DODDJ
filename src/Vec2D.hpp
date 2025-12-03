@@ -5,6 +5,8 @@
 
 #include "./Commons.hpp"
 
+// clang-format off
+
 // Assumes a Y-Down coordinate system
 //```
 //         (0,-1)

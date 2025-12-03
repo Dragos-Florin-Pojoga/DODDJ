@@ -1,11 +1,13 @@
 #pragma once
 
 #include "./Commons.hpp"
-#include "./Logging.hpp"
 #include "./GLOBALS.hpp"
+#include "./Logging.hpp"
 
-#include <unordered_map>
 #include <stack>
+#include <unordered_map>
+
+// clang-format off
 
 struct Entity {
     u32 id;

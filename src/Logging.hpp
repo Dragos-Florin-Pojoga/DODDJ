@@ -2,8 +2,10 @@
 
 #include <SDL3/SDL_log.h>
 
-#include <sstream>
 #include <chrono>
+#include <sstream>
+
+// clang-format off
 
 namespace Logging {
     enum class LogLevel {

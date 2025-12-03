@@ -1,13 +1,14 @@
 #pragma once
 
-#include <vector>
-#include <unordered_map>
 #include <typeinfo>
+#include <unordered_map>
+#include <vector>
 
 #include "Commons.hpp"
+#include "Entity.hpp"
 #include "Logging.hpp"
 
-template<typename T>
+template <typename T>
 class ComponentStore {
 public:
     void add(Entity e, const T& comp) {
@@ -29,7 +30,7 @@ public:
 
         const size_t removed_index = m_entity_to_index[e];
         const size_t last_index = m_data.size() - 1;
-        
+
         if (removed_index != last_index) {
             const Entity last_entity = m_index_to_entity[last_index];
             m_data[removed_index] = m_data[last_index];

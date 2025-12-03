@@ -1,16 +1,15 @@
 #pragma once
 
 #include <SDL3/SDL.h>
-#include <string>
 #include <memory>
+#include <string>
 
 #include "./Commons.hpp"
-#include "./Entity.hpp"
 #include "./ComponentStore.hpp"
-#include "./Transform2D.hpp"
+#include "./Entity.hpp"
 #include "./Physics.hpp"
 #include "./Renderer.hpp"
-
+#include "./Transform2D.hpp"
 
 class Scene {
 public:
@@ -25,12 +24,18 @@ public:
     }
 
     void destroyEntity(Entity e) {
-        if (e == INVALID_ENTITY) return;
-        if (m_transforms.has(e)) m_transforms.remove(e);
-        if (m_rigidbodies.has(e)) m_rigidbodies.remove(e);
-        if (m_circleColliders.has(e)) m_circleColliders.remove(e);
-        if (m_boxColliders.has(e)) m_boxColliders.remove(e);
-        if (m_renderables.has(e)) m_renderables.remove(e);
+        if (e == INVALID_ENTITY)
+            return;
+        if (m_transforms.has(e))
+            m_transforms.remove(e);
+        if (m_rigidbodies.has(e))
+            m_rigidbodies.remove(e);
+        if (m_circleColliders.has(e))
+            m_circleColliders.remove(e);
+        if (m_boxColliders.has(e))
+            m_boxColliders.remove(e);
+        if (m_renderables.has(e))
+            m_renderables.remove(e);
         m_entities.destroy(e);
     }
 
@@ -55,7 +60,7 @@ public:
 
     // TODO: dynamic componentstores
 
-// private:
+    // private:
     std::string m_name;
     EntityManager m_entities;
 
@@ -66,8 +71,8 @@ public:
 
     ComponentStore<Renderable> m_renderables;
 
-    std::unique_ptr<PhysicsSystem> m_physics = std::make_unique<PhysicsSystem>(m_transforms, m_rigidbodies, m_circleColliders, m_boxColliders, 1.0f/720.0f); // high rez / more stable physics
+    std::unique_ptr<PhysicsSystem> m_physics = std::make_unique<PhysicsSystem>(m_transforms, m_rigidbodies, m_circleColliders, m_boxColliders, 1.0f / 720.0f); // high rez / more stable physics
     std::unique_ptr<RenderSystem> m_renderer = std::make_unique<RenderSystem>(m_transforms, m_renderables);
 
-    SDL_Renderer *renderer = NULL;
+    SDL_Renderer* renderer = NULL;
 };

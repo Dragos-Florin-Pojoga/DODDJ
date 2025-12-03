@@ -4,12 +4,14 @@
 #include <iostream>
 
 #include "./Commons.hpp"
-#include "./Vec2D.hpp"
-#include "./Transform2D.hpp"
 #include "./Entity.hpp"
+#include "./GLOBALS.hpp"
 #include "./Physics.hpp"
 #include "./Renderer.hpp"
-#include "./GLOBALS.hpp"
+#include "./Transform2D.hpp"
+#include "./Vec2D.hpp"
+
+// clang-format off
 
 std::ostream& operator<<(std::ostream& os, const Vec2D& v) {
     os << "Vec2D(" << v.x << ", " << v.y << ")";

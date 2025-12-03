@@ -4,10 +4,12 @@
 #include <vector>
 
 #include "./Commons.hpp"
-#include "./Transform2D.hpp"
-#include "./Logging.hpp"
 #include "./ComponentStore.hpp"
 #include "./Constatnts.hpp"
+#include "./Logging.hpp"
+#include "./Transform2D.hpp"
+
+// clang-format off
 
 struct Renderable {
     enum class Shape { QUAD, CIRCLE };
