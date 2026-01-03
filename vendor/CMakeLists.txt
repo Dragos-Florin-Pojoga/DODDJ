@@ -21,9 +21,13 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC SDL3::SDL3)
 # -- Dear ImGui
 
+# Box2D
+add_subdirectory(box2d EXCLUDE_FROM_ALL)
+# -- Box2D
 
 add_library(vendor INTERFACE)
 target_link_libraries(vendor INTERFACE
     SDL3::SDL3
     imgui
+    box2d
 )
