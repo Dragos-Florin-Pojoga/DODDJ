@@ -59,6 +59,8 @@ public:
             worker.join();
     }
 
+    size_t thread_count() const { return workers.size(); }
+
 private:
     std::vector<std::thread> workers;
     std::queue<std::function<void()>> tasks;

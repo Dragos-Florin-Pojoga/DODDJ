@@ -3,13 +3,26 @@
 #include <algorithm>
 #include <bitset>
 
-template <typename T, size_t WIDTH, size_t HEIGHT>
+enum class StorageOrder { RowMajor, ColumnMajor };
+
+template <typename T, size_t WIDTH, size_t HEIGHT, StorageOrder ORDER = StorageOrder::RowMajor>
 class Array2D {
 public:
     Array2D() { clear(); }
 
-    T& at(size_t x, size_t y) { return m_data[y * WIDTH + x]; }
-    const T& at(size_t x, size_t y) const { return m_data[y * WIDTH + x]; }
+    T& at(size_t x, size_t y) { return m_data[index(x, y)]; }
+    const T& at(size_t x, size_t y) const { return m_data[index(x, y)]; }
+
+private:
+    static constexpr size_t index(size_t x, size_t y) {
+        if constexpr (ORDER == StorageOrder::RowMajor) {
+            return y * WIDTH + x;
+        } else {
+            return x * HEIGHT + y;
+        }
+    }
+
+public:
 
     T& operator()(size_t x, size_t y) { return at(x, y); }
     const T& operator()(size_t x, size_t y) const { return at(x, y); }

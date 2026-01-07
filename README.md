@@ -49,11 +49,23 @@ cd DODDJ
 
 <summary>Linux</summary>
 
-### Configure & Compile
+### Configure, Compile & Run the app
 
 ```sh
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Dist
-cmake --build build
+make run_dist
+```
+
+<details>
+
+<summary>Or, manually</summary>
+
+### Configure & Compile
+
+simply run `make` or use `cmake` directly
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Dist # = make config_dist
+cmake --build build                                  # = make dist
 ```
 
 ### Run the app
@@ -62,6 +74,8 @@ cmake --build build
 cd build/Dist
 ./DODDJ
 ```
+
+</details>
 
 </details>
 

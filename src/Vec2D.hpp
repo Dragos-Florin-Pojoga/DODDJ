@@ -3,6 +3,8 @@
 #include <SDL3/SDL.h>
 #include <cmath>
 
+#include <box2d/box2d.h>
+
 #include "./Commons.hpp"
 
 // clang-format off
@@ -22,7 +24,8 @@ struct Vec2D {
     Vec2D() : x(0.0f), y(0.0f) {}
     Vec2D(f32 x, f32 y) : x(x), y(y) {}
 
-    operator SDL_FPoint() const { return {x, y}; }
+    operator SDL_FPoint() const { return *this; }
+    operator b2Vec2() const { return *this; }
 
     Vec2D operator+(const Vec2D& v) const { return {x + v.x, y + v.y}; }
     Vec2D& operator+=(const Vec2D& v) { x += v.x; y += v.y; return *this; }

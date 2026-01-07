@@ -1,7 +1,6 @@
 #pragma once
 
 #include "./Commons.hpp"
-#include "./GLOBALS.hpp"
 #include "./Logging.hpp"
 
 #include <stack>

@@ -5,18 +5,14 @@
 
 #include "./Commons.hpp"
 #include "./ComponentStore.hpp"
-#include "./Constatnts.hpp"
 #include "./Logging.hpp"
 #include "./Transform2D.hpp"
+#include "./Camera.hpp"
 
 // clang-format off
 
 struct Renderable {
     enum class Shape { QUAD, CIRCLE };
-    Shape shape = Shape::QUAD;
-    SDL_FColor color = { 1.0f, 1.0f, 1.0f, 1.0f };
-    SDL_Texture* texture = nullptr; // nullptr for solid color
-    
     // higher on top
     enum class ZIndex {
         BACKGROUND = 0,
@@ -24,7 +20,11 @@ struct Renderable {
         FOREGROUND = 200,
         UI = 300,
     };
+
+    Shape shape = Shape::QUAD;
     ZIndex z_index = ZIndex::DEFAULT;
+    SDL_Texture* texture = nullptr; // nullptr for solid color
+    SDL_FColor color = { 1.0f, 1.0f, 1.0f, 1.0f };
 };
 
 // Manages a single batch of vertices for one texture
@@ -36,11 +36,12 @@ public:
     }
     ~BatchRenderer() = default;
 
-    void begin() {
+    void begin(const Camera& camera) {
         if (!m_renderer) {
             Logging::log_critical("BatchRenderer has no SDL_Renderer set!"); 
             return;
         }
+        m_camera = &camera;
         m_vertex_count = 0;
         m_index_count = 0;
         m_current_texture = nullptr;
@@ -75,7 +76,8 @@ private:
     }
 
     SDL_Renderer* m_renderer = nullptr;
-    
+    const Camera* m_camera = nullptr;
+
     SDL_Texture* m_current_texture = nullptr;
 
     std::vector<SDL_Vertex> m_vertices;
@@ -100,27 +102,31 @@ void BatchRenderer::submit(const Transform2D& transform, const Renderable& rende
         m_current_texture = renderable.texture; // Start new batch with new texture
     }
 
-    const float w_pixels = transform.scale.x * METERS_TO_PIXELS;
-    const float h_pixels = transform.scale.y * METERS_TO_PIXELS;
-
-    // Center of the quad
-    const float x = transform.position.x * METERS_TO_PIXELS;
-    const float y = transform.position.y * METERS_TO_PIXELS;
+    const float half_w = transform.scale.x / 2;
+    const float half_h = transform.scale.y / 2;
     
-    // TODO: Add rotation logic
+    const b2Vec2 center = { transform.position.x, transform.position.y };
     
-    const float half_w = w_pixels * 0.5f;
-    const float half_h = h_pixels * 0.5f;
+    // TODO: Add rotation logic ?
+    const b2Vec2 topLeft = { center.x - half_w, center.y - half_h };
+    const b2Vec2 topRight = { center.x + half_w, center.y - half_h };
+    const b2Vec2 bottomRight = { center.x + half_w, center.y + half_h };
+    const b2Vec2 bottomLeft = { center.x - half_w, center.y + half_h };
+    
+    const SDL_FPoint screenTL = m_camera->worldToScreen(topLeft);
+    const SDL_FPoint screenTR = m_camera->worldToScreen(topRight);
+    const SDL_FPoint screenBR = m_camera->worldToScreen(bottomRight);
+    const SDL_FPoint screenBL = m_camera->worldToScreen(bottomLeft);
 
     // 0---1
     // | \ |
     // 3---2
     // 1 quad = 2 triangles: 0-1-2 and 0-2-3
 
-    m_vertices[m_vertex_count + 0] = { { x - half_w, y - half_h }, renderable.color, {0.0f, 0.0f} }; // Top-left
-    m_vertices[m_vertex_count + 1] = { { x + half_w, y - half_h }, renderable.color, {1.0f, 0.0f} }; // Top-right
-    m_vertices[m_vertex_count + 2] = { { x + half_w, y + half_h }, renderable.color, {1.0f, 1.0f} }; // Bottom-right
-    m_vertices[m_vertex_count + 3] = { { x - half_w, y + half_h }, renderable.color, {0.0f, 1.0f} }; // Bottom-left
+    m_vertices[m_vertex_count + 0] = { screenTL, renderable.color, {0.0f, 0.0f} }; // Top-left
+    m_vertices[m_vertex_count + 1] = { screenTR, renderable.color, {1.0f, 0.0f} }; // Top-right
+    m_vertices[m_vertex_count + 2] = { screenBR, renderable.color, {1.0f, 1.0f} }; // Bottom-right
+    m_vertices[m_vertex_count + 3] = { screenBL, renderable.color, {0.0f, 1.0f} }; // Bottom-left
     
     m_indices[m_index_count + 0] = m_vertex_count + 0;
     m_indices[m_index_count + 1] = m_vertex_count + 1;
@@ -141,7 +147,7 @@ public:
     {
     }
 
-    void draw(SDL_Renderer* renderer) {
+    void draw(SDL_Renderer* renderer, const Camera& camera) {
         m_batcher.setRenderer(renderer);
 
         m_render_jobs.clear();
@@ -160,7 +166,7 @@ public:
             return a.renderable->texture < b.renderable->texture;
         });
 
-        m_batcher.begin();
+        m_batcher.begin(camera);
         for (const auto& job : m_render_jobs) {
             m_batcher.submit(*job.transform, *job.renderable);
         }
