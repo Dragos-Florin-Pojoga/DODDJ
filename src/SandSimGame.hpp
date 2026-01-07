@@ -94,8 +94,8 @@ public:
 
             // Sand spawner orbits counter-clockwise
             const f32 sand_radius = 100.0f;
-            const i32 sand_x = static_cast<i32>(center_x + std::cos(-t + M_PI) * sand_radius);
-            const i32 sand_y = static_cast<i32>(center_y + std::sin(-t + M_PI) * sand_radius * 0.5f);
+            const i32 sand_x = static_cast<i32>(center_x + std::cos(-t + SDL_PI_F) * sand_radius);
+            const i32 sand_y = static_cast<i32>(center_y + std::sin(-t + SDL_PI_F) * sand_radius * 0.5f);
             for (i32 dx = -5; dx <= 5; ++dx) {
                 for (i32 dy = -5; dy <= 5; ++dy) {
                     m_sand_world.setParticle(static_cast<u32>(sand_x + dx), static_cast<u32>(sand_y + dy), ParticleID::SAND);
