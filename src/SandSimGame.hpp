@@ -1,6 +1,11 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
+#include <thread>
 
 #include "./Commons.hpp"
 #include "./App.hpp"
@@ -11,6 +16,10 @@
 
 static const char* particle_names[] = { "AIR", "STONE", "SAND", "WATER" };
 
+inline void ImGui__SliderU32(const char* label, u32* v, u32 v_min, u32 v_max) {
+    ImGui::SliderScalar(label, ImGuiDataType_U32, v, &v_min, &v_max);
+}
+
 class SandSimScene : public Scene {
 public:
     SandSimScene() : Scene("SandSimScene") {}
@@ -19,11 +28,33 @@ public:
     i32 m_brush_size = 3;
     i32 m_selected_particle = static_cast<i32>(ParticleID::SAND);
 
+    f32 m_sim_sps = 0.0f;
+    bool m_fixed_steps_mode = false;
+    i32 m_sim_rate = 1;
+
     void render_UI(f32 dt, SDL_Renderer* renderer) override {
         ImGui::Begin("Menu");
-        ImGui::SliderInt("Slowdown factor", &SLOWDOWN_FACTOR, 1, 100);
+        ImGui::Text("Sim Speed: %.1f SPS", m_sim_sps);
         ImGui::SliderInt("Brush size", &m_brush_size, 1, 50);
         ImGui::Combo("Particle type", &m_selected_particle, particle_names, IM_ARRAYSIZE(particle_names));
+        
+        ImGui::Separator();
+        ImGui::Text("Simulation Rate");
+        ImGui::Checkbox("Fixed steps mode", &m_fixed_steps_mode);
+        if (m_fixed_steps_mode) {
+            ImGui::SliderInt("Rate", &m_sim_rate, -200, 200);
+            if (m_sim_rate == 0) m_sim_rate = 1;  // no div 0
+            if (m_sim_rate > 0) {
+                ImGui::Text("%d steps/frame", m_sim_rate);
+            } else {
+                ImGui::Text("1 step every %d frames", -m_sim_rate);
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Water Spreading");
+        ImGui__SliderU32("Max distance", &WATER_MAX_DIST, 1, 10);
+        ImGui__SliderU32("Falloff factor", &WATER_SPREAD_FALLOFF, 1, 10);
         ImGui::End();
     }
 };
@@ -36,6 +67,10 @@ public:
         m_window_title = "SandSim";
 
         m_main_scene.m_camera.m_zoom = 0.7f;
+    }
+
+    ~SandSimGame() {
+        stop_simulation_thread();
     }
 
     SDL_AppResult downstream_init(i32 argc, char** argv) override {
@@ -68,7 +103,103 @@ public:
 
         Logging::log_debug(m_main_scene.m_entities);
 
+        start_simulation_thread();
+
         return SDL_APP_CONTINUE;
+    }
+
+    void start_simulation_thread() {
+        m_sim_running.store(true, std::memory_order_release);
+        m_sim_thread = std::thread([this]() {
+            u64 last_step_count = SIM_STEP_COUNT;
+            auto last_sps_update = std::chrono::steady_clock::now();
+
+            while (m_sim_running.load(std::memory_order_acquire)) {
+                if (m_fixed_steps_mode.load(std::memory_order_acquire)) { // fixed step mode
+                    std::unique_lock<std::mutex> lock(m_step_mutex);
+
+                    m_step_cv.wait(lock, [this] {
+                        return m_steps_remaining.load(std::memory_order_acquire) > 0 || 
+                               !m_sim_running.load(std::memory_order_acquire) ||
+                               !m_fixed_steps_mode.load(std::memory_order_acquire);
+                    });
+                    
+                    if (!m_sim_running.load(std::memory_order_acquire)) {
+                        break;
+                    }
+                    
+                    if (m_fixed_steps_mode.load(std::memory_order_acquire)) { // consume step
+                        m_steps_remaining.fetch_sub(1, std::memory_order_release);
+                    }
+                }
+
+                if (m_benchmark_mode) {
+                    run_benchmark_iteration();
+                }
+
+                m_sand_world.update();
+
+                // Update SPS every second
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sps_update).count();
+                if (elapsed >= 1000) {
+                    u64 steps_this_period = SIM_STEP_COUNT - last_step_count;
+                    m_current_sps.store(static_cast<f32>(steps_this_period) * 1000.0f / static_cast<f32>(elapsed), std::memory_order_release);
+                    last_step_count = SIM_STEP_COUNT;
+                    last_sps_update = now;
+                }
+            }
+        });
+    }
+
+    void stop_simulation_thread() {
+        m_sim_running.store(false, std::memory_order_release);
+
+        // wake thread if waiting
+        {
+            std::lock_guard<std::mutex> lock(m_step_mutex);
+            m_steps_remaining.store(1, std::memory_order_release);
+        }
+
+        m_step_cv.notify_one();
+        
+        if (m_sim_thread.joinable()) {
+            m_sim_thread.join();
+        }
+    }
+
+    void run_benchmark_iteration() {
+        const f32 center_x = static_cast<f32>(m_sand_world.width()) / 2.0f;
+        const f32 center_y = static_cast<f32>(m_sand_world.height()) / 2.0f * 0.3f;
+        const u32 iter = m_benchmark_current_iteration.fetch_add(1, std::memory_order_relaxed);
+        const f32 t = static_cast<f32>(iter) * 0.02f;
+
+        // Water spawner orbits clockwise
+        const f32 water_radius = 80.0f;
+        const i32 water_x = static_cast<i32>(center_x + std::cos(t) * water_radius);
+        const i32 water_y = static_cast<i32>(center_y + std::sin(t) * water_radius * 0.5f);
+        for (i32 dx = -5; dx <= 5; ++dx) {
+            for (i32 dy = -5; dy <= 5; ++dy) {
+                m_sand_world.setParticle(static_cast<u32>(water_x + dx), static_cast<u32>(water_y + dy), ParticleID::WATER);
+            }
+        }
+
+        // Sand spawner orbits counter-clockwise
+        const f32 sand_radius = 100.0f;
+        const i32 sand_x = static_cast<i32>(center_x + std::cos(-t + SDL_PI_F) * sand_radius);
+        const i32 sand_y = static_cast<i32>(center_y + std::sin(-t + SDL_PI_F) * sand_radius * 0.5f);
+        for (i32 dx = -5; dx <= 5; ++dx) {
+            for (i32 dy = -5; dy <= 5; ++dy) {
+                m_sand_world.setParticle(static_cast<u32>(sand_x + dx), static_cast<u32>(sand_y + dy), ParticleID::SAND);
+            }
+        }
+
+        if (iter >= m_benchmark_iterations) {
+            Logging::log_info("Benchmark complete: ", m_benchmark_iterations, " iterations");
+            SDL_Event quit_event{};
+            quit_event.type = SDL_EVENT_QUIT;
+            SDL_PushEvent(&quit_event);
+        }
     }
 
     void downstream_iterate(f32 dt) override {
@@ -77,41 +208,40 @@ public:
             paint(m_mouse_x, m_mouse_y);
         }
 
-        if (m_benchmark_mode) {
-            const f32 center_x = static_cast<f32>(m_sand_world.width()) / 2.0f;
-            const f32 center_y = static_cast<f32>(m_sand_world.height()) / 2.0f * 0.3f;
-            const f32 t = static_cast<f32>(m_benchmark_current_iteration) * 0.02f;
+        // update SPS
+        m_main_scene.m_sim_sps = m_current_sps.load(std::memory_order_acquire);
 
-            // Water spawner orbits clockwise
-            const f32 water_radius = 80.0f;
-            const i32 water_x = static_cast<i32>(center_x + std::cos(t) * water_radius);
-            const i32 water_y = static_cast<i32>(center_y + std::sin(t) * water_radius * 0.5f);
-            for (i32 dx = -5; dx <= 5; ++dx) {
-                for (i32 dy = -5; dy <= 5; ++dy) {
-                    m_sand_world.setParticle(static_cast<u32>(water_x + dx), static_cast<u32>(water_y + dy), ParticleID::WATER);
+        bool was_fixed = m_fixed_steps_mode.load(std::memory_order_acquire);
+        bool is_fixed = m_main_scene.m_fixed_steps_mode;
+        m_fixed_steps_mode.store(is_fixed, std::memory_order_release);
+        
+        // fixed step mode
+        if (is_fixed) {
+            const i32 rate = m_main_scene.m_sim_rate;
+            if (rate > 0) { // steps per frame
+                {
+                    std::lock_guard<std::mutex> lock(m_step_mutex);
+                    m_steps_remaining.store(rate, std::memory_order_release);
+                }
+                m_step_cv.notify_one();
+            } else { // 1 step every -rate frames
+                ++m_frame_counter;
+                if (m_frame_counter >= -rate) {
+                    m_frame_counter = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(m_step_mutex);
+                        m_steps_remaining.store(1, std::memory_order_release);
+                    }
+                    m_step_cv.notify_one();
                 }
             }
-
-            // Sand spawner orbits counter-clockwise
-            const f32 sand_radius = 100.0f;
-            const i32 sand_x = static_cast<i32>(center_x + std::cos(-t + SDL_PI_F) * sand_radius);
-            const i32 sand_y = static_cast<i32>(center_y + std::sin(-t + SDL_PI_F) * sand_radius * 0.5f);
-            for (i32 dx = -5; dx <= 5; ++dx) {
-                for (i32 dy = -5; dy <= 5; ++dy) {
-                    m_sand_world.setParticle(static_cast<u32>(sand_x + dx), static_cast<u32>(sand_y + dy), ParticleID::SAND);
-                }
-            }
-
-            ++m_benchmark_current_iteration;
-            if (m_benchmark_current_iteration >= m_benchmark_iterations) {
-                Logging::log_info("Benchmark complete: ", m_benchmark_iterations, " iterations");
-                SDL_Event quit_event{};
-                quit_event.type = SDL_EVENT_QUIT;
-                SDL_PushEvent(&quit_event);
+        } else {
+            m_frame_counter = 0; // reset when not in fixed mode
+            if (was_fixed) {
+                m_step_cv.notify_one(); // wake up thread
             }
         }
         
-        m_sand_world.update();
         m_sand_world.renderToTexture(m_sand_world_texture);
     }
 
@@ -235,8 +365,20 @@ public:
     SandWorld<7, 5> m_sand_world;
     const u32 m_sand_pixel_size = 4;
 
+    // Simulation thread
+    std::thread m_sim_thread;
+    std::atomic<bool> m_sim_running{false};
+    std::atomic<f32> m_current_sps{0.0f};
+
+    // Fixed steps mode synchronization
+    std::atomic<bool> m_fixed_steps_mode{false};
+    std::atomic<i32> m_steps_remaining{0};
+    i32 m_frame_counter{0};  // Counts frames for slowdown mode
+    std::mutex m_step_mutex;
+    std::condition_variable m_step_cv;
+
     // Benchmark mode
     bool m_benchmark_mode = false;
     u32 m_benchmark_iterations = 0;
-    u32 m_benchmark_current_iteration = 0;
+    std::atomic<u32> m_benchmark_current_iteration{0};
 };

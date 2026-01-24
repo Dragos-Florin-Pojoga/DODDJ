@@ -11,6 +11,7 @@
 #include "./Commons.hpp"
 #include "./Logging.hpp"
 #include "./Scene.hpp"
+#include "SDL3/SDL_render.h"
 
 class App {
 public: // Settings
@@ -58,7 +59,7 @@ public:
             Logging::log_critical("Couldn't create window/renderer: ", SDL_GetError());
             return SDL_APP_FAILURE;
         }
-        SDL_SetRenderVSync(m_renderer, SDL_RENDERER_VSYNC_DISABLED);
+        SDL_SetRenderVSync(m_renderer, SDL_RENDERER_VSYNC_ADAPTIVE);
 
         SDL_SetWindowPosition(m_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
         SDL_ShowWindow(m_window);

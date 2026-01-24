@@ -10,7 +10,11 @@
 #include "Logging.hpp"
 #include "ThreadPool.hpp"
 
-i32 SLOWDOWN_FACTOR = 1;
+u32 SIM_STEP_COUNT = 0;
+
+// Water spreading configuration
+u32 WATER_MAX_DIST = 4;
+u32 WATER_SPREAD_FALLOFF = 4;
 
 static inline u32 fast_rand() {
     static u32 seed = 0x12345678u;
@@ -55,7 +59,7 @@ public:
     }
 
     void update_sand(const u32 x, const u32 y) {
-        static constexpr std::pair<int, int> dirs[] = {
+        static constexpr std::pair<i32, i32> dirs[] = {
             {0, 1},  // down
             {-1, 1}, // down-left
             {1, 1}   // down-right
@@ -85,7 +89,7 @@ public:
     }
 
     void update_water(const u32 x, const u32 y) {
-        // down
+        // straight down
         if (m_particles(x, y + 1).id == ParticleID::AIR) {
             m_particles(x, y + 1).id = ParticleID::WATER;
             m_particles(x, y).id = ParticleID::AIR;
@@ -93,48 +97,59 @@ public:
             return;
         }
 
-        const u32 r = fast_rand();
-        const bool flip = r & 1;
-
-        // down-left / down-right
-        {
-            const int dx1 = flip ? -1 : 1;
-            const int dx2 = flip ? 1 : -1;
-
-            if (m_particles(x + dx1, y + 1).id == ParticleID::AIR) {
-                m_particles(x + dx1, y + 1).id = ParticleID::WATER;
-                m_particles(x, y).id = ParticleID::AIR;
-                m_updated_particles.set(x + dx1, y + 1);
-                return;
+        auto try_spread = [&](bool left) -> bool {
+            u32 cur_x = x;
+            u32 cur_y = y;
+            constexpr u32 max_x = WIDTH * CHUNK_WIDTH - 1;
+            constexpr u32 max_y = HEIGHT * CHUNK_HEIGHT - 1;
+            
+            for (u32 step = 1; step <= WATER_MAX_DIST; ++step) {
+                // probability falloff: the further we spread, the less likely to continue
+                if (step > 1 && (fast_rand() % WATER_SPREAD_FALLOFF) >= (WATER_MAX_DIST + 1 - step)) {
+                    break;
+                }
+                
+                const u32 next_x = left ? cur_x - 1 : cur_x + 1;
+                const u32 next_y = cur_y + 1;
+                
+                // Bounds check (stone border guarantees x >= 1)
+                if (next_x < 1 || next_x >= max_x) {
+                    break;
+                }
+                
+                // diagonal-down
+                if (next_y < max_y && m_particles(next_x, next_y).id == ParticleID::AIR) {
+                    cur_x = next_x;
+                    cur_y = next_y;
+                    continue;
+                }
+                
+                // horizontal
+                if (m_particles(next_x, cur_y).id == ParticleID::AIR) {
+                    cur_x = next_x;
+                    continue;
+                }
+                
+                break;
             }
-
-            if (m_particles(x + dx2, y + 1).id == ParticleID::AIR) {
-                m_particles(x + dx2, y + 1).id = ParticleID::WATER;
+            
+            if (cur_x != x || cur_y != y) {
+                m_particles(cur_x, cur_y).id = ParticleID::WATER;
                 m_particles(x, y).id = ParticleID::AIR;
-                m_updated_particles.set(x + dx2, y + 1);
-                return;
+                m_updated_particles.set(cur_x, cur_y);
+                return true;
             }
+            return false;
+        };
+
+        const bool go_left = fast_rand() & 1;
+        
+        if (try_spread(go_left)) {
+            return;
         }
-
-        // left / right
-        {
-            const int dx1 = (r & 2) ? -1 : 1;
-            const int dx2 = -dx1;
-
-            if (m_particles(x + dx1, y).id == ParticleID::AIR) {
-                m_particles(x + dx1, y).id = ParticleID::WATER;
-                m_particles(x, y).id = ParticleID::AIR;
-                m_updated_particles.set(x + dx1, y);
-                return;
-            }
-
-            if (m_particles(x + dx2, y).id == ParticleID::AIR) {
-                m_particles(x + dx2, y).id = ParticleID::WATER;
-                m_particles(x, y).id = ParticleID::AIR;
-                m_updated_particles.set(x + dx2, y);
-                return;
-            }
-        }
+        
+        // Try opposite direction if primary blocked
+        try_spread(!go_left);
     }
 
     void update_chunk(const u32 chunk_x, const u32 chunk_y) {
@@ -168,19 +183,13 @@ public:
             }
         }
     }
-
     void update() {
-        static u32 frame_count = 0;
-        frame_count++;
-
-        if (frame_count % SLOWDOWN_FACTOR != 0) {
-            return;
-        }
+        ++SIM_STEP_COUNT;
 
         m_updated_particles.clear();
 
-        const bool flip_chunks_x = frame_count & 1; // every 1
-        const bool flip_chunks_y = (frame_count >> 1) & 1;  // every 2
+        const bool flip_chunks_x = SIM_STEP_COUNT & 1; // every 1
+        const bool flip_chunks_y = (SIM_STEP_COUNT >> 1) & 1;  // every 2
 
         for (u32 phase_y = 0; phase_y < 2; ++phase_y) {
             for (u32 phase_x = 0; phase_x < 2; ++phase_x) {
