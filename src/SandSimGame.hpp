@@ -12,7 +12,10 @@
 #include "./Scene.hpp"
 #include "./Camera.hpp"
 #include "./SandSimulation.hpp"
+#include "./PhysicsWorld.hpp"
+#include "./RigidbodyManager.hpp"
 #include "imgui.h"
+#include "GlobalAtomics.hpp"
 
 static const char* particle_names[] = { "AIR", "STONE", "SAND", "WATER" };
 
@@ -28,20 +31,27 @@ public:
     i32 m_brush_size = 3;
     i32 m_selected_particle = static_cast<i32>(ParticleID::SAND);
 
-    f32 m_sim_sps = 0.0f;
-    bool m_fixed_steps_mode = false;
     i32 m_sim_rate = 1;
 
     void render_UI(f32 dt, SDL_Renderer* renderer) override {
         ImGui::Begin("Menu");
-        ImGui::Text("Sim Speed: %.1f SPS", m_sim_sps);
+        ImGui::Text("Sim Speed: %.1f SPS", g_sim_sps.load());
+        ImGui::Separator();
+        
+        ImGui::Text("RBs:%d |SMCs:%d |DPs:%d", g_rigidbody_count.load(), g_static_mesh_count.load(), g_stat_debris_count.load());
+        ImGui::Text("Timings(ms): Mesh Gen:%d |Phys Update:%d", g_stat_mesh_ms.load(), g_stat_update_ms.load());
+        ImGui::Separator();
+
         ImGui::SliderInt("Brush size", &m_brush_size, 1, 50);
         ImGui::Combo("Particle type", &m_selected_particle, particle_names, IM_ARRAYSIZE(particle_names));
-        
         ImGui::Separator();
+        
         ImGui::Text("Simulation Rate");
-        ImGui::Checkbox("Fixed steps mode", &m_fixed_steps_mode);
-        if (m_fixed_steps_mode) {
+        bool fixed_steps = g_fixed_steps_mode.load();
+        if (ImGui::Checkbox("Fixed steps mode", &fixed_steps)) {
+            g_fixed_steps_mode.store(fixed_steps);
+        }
+        if (fixed_steps) {
             ImGui::SliderInt("Rate", &m_sim_rate, -200, 200);
             if (m_sim_rate == 0) m_sim_rate = 1;  // no div 0
             if (m_sim_rate > 0) {
@@ -50,13 +60,21 @@ public:
                 ImGui::Text("1 step every %d frames", -m_sim_rate);
             }
         }
-
         ImGui::Separator();
+
         ImGui::Text("Water Spreading");
         ImGui__SliderU32("Max distance", &WATER_MAX_DIST, 1, 10);
         ImGui__SliderU32("Falloff factor", &WATER_SPREAD_FALLOFF, 1, 10);
+        ImGui::Separator();
+        
         ImGui::End();
+        
+        if (m_debug_render_cb) {
+            m_debug_render_cb(renderer);
+        }
     }
+
+    std::function<void(SDL_Renderer*)> m_debug_render_cb;
 };
 
 class SandSimGame : public App {
@@ -66,7 +84,10 @@ public:
         m_window_height = 1100;
         m_window_title = "SandSim";
 
-        m_main_scene.m_camera.m_zoom = 0.7f;
+        m_main_scene.m_camera.m_zoom = 2.7f;
+        m_main_scene.m_camera.m_target = m_main_scene.m_camera.screenToWorld({m_window_width * 0.4f, m_window_height * 0.35f});
+        
+        m_physics_world = std::make_unique<PhysicsWorld>();
     }
 
     ~SandSimGame() {
@@ -92,73 +113,166 @@ public:
         }
 
         SDL_SetTextureScaleMode(m_sand_world_texture, SDL_SCALEMODE_NEAREST);
-
-        const float size_w = m_sand_world.width() / PIXELS_PER_METER * m_sand_pixel_size;
-        const float size_h = m_sand_world.height() / PIXELS_PER_METER * m_sand_pixel_size;
+        const f32 size_w = static_cast<f32>(m_sand_world.width()) / PIXELS_PER_METER;
+        const f32 size_h = static_cast<f32>(m_sand_world.height()) / PIXELS_PER_METER;
 
         Entity sand_entity = m_main_scene.m_entities.create("SandSimulation");
-
-        m_main_scene.m_transforms.add(sand_entity, Transform2D({0, 0}, {size_w, size_h}, 0.0f));
+        m_main_scene.m_transforms.add(sand_entity, Transform2D({size_w * 0.5f, size_h * 0.5f}, {size_w, size_h}, 0.0f));
         m_main_scene.m_renderables.add(sand_entity, Renderable{Renderable::Shape::QUAD, Renderable::ZIndex::DEFAULT, m_sand_world_texture});
 
         Logging::log_debug(m_main_scene.m_entities);
 
         start_simulation_thread();
+        
+        // TODO: FIXME: this is actually more than just debug rendering :/
+        m_main_scene.m_debug_render_cb = [this](SDL_Renderer* renderer) {
+            // lock to prevent flickering
+            std::lock_guard<std::mutex> lock(m_physics_mutex);
+
+            // TEMP: FIXME: this is NOT debug rendering
+            // draw debris
+            m_physics_world->render_debris(renderer, m_main_scene.m_camera);
+
+            if (m_debug_draw) {
+                m_physics_world->render_debug(renderer, m_main_scene.m_camera);
+            }
+        };
 
         return SDL_APP_CONTINUE;
     }
 
     void start_simulation_thread() {
-        m_sim_running.store(true, std::memory_order_release);
-        m_sim_thread = std::thread([this]() {
-            u64 last_step_count = SIM_STEP_COUNT;
-            auto last_sps_update = std::chrono::steady_clock::now();
+        g_sim_running.store(true, std::memory_order_release);
+        m_sim_thread = std::thread(&SandSimGame::simulation_thread_proc, this);
+    }
 
-            while (m_sim_running.load(std::memory_order_acquire)) {
-                if (m_fixed_steps_mode.load(std::memory_order_acquire)) { // fixed step mode
-                    std::unique_lock<std::mutex> lock(m_step_mutex);
+    void simulation_thread_proc() {
+        u64 last_step_count = g_sim_step_count.load();
+        auto last_sps_update = std::chrono::steady_clock::now();
 
-                    m_step_cv.wait(lock, [this] {
-                        return m_steps_remaining.load(std::memory_order_acquire) > 0 || 
-                               !m_sim_running.load(std::memory_order_acquire) ||
-                               !m_fixed_steps_mode.load(std::memory_order_acquire);
-                    });
-                    
-                    if (!m_sim_running.load(std::memory_order_acquire)) {
-                        break;
-                    }
-                    
-                    if (m_fixed_steps_mode.load(std::memory_order_acquire)) { // consume step
-                        m_steps_remaining.fetch_sub(1, std::memory_order_release);
-                    }
+        while (g_sim_running.load(std::memory_order_acquire)) {
+            if (g_fixed_steps_mode.load(std::memory_order_acquire)) { // fixed step mode
+                std::unique_lock<std::mutex> lock(m_step_mutex);
+
+                m_step_cv.wait(lock, [this] {
+                    return g_steps_remaining.load(std::memory_order_acquire) > 0 || 
+                           !g_sim_running.load(std::memory_order_acquire) ||
+                           !g_fixed_steps_mode.load(std::memory_order_acquire);
+                });
+                
+                if (!g_sim_running.load(std::memory_order_acquire)) {
+                    break;
                 }
-
-                if (m_benchmark_mode) {
-                    run_benchmark_iteration();
-                }
-
-                m_sand_world.update();
-
-                // Update SPS every second
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sps_update).count();
-                if (elapsed >= 1000) {
-                    u64 steps_this_period = SIM_STEP_COUNT - last_step_count;
-                    m_current_sps.store(static_cast<f32>(steps_this_period) * 1000.0f / static_cast<f32>(elapsed), std::memory_order_release);
-                    last_step_count = SIM_STEP_COUNT;
-                    last_sps_update = now;
+                
+                if (g_fixed_steps_mode.load(std::memory_order_acquire)) { // consume step
+                    g_steps_remaining.fetch_sub(1, std::memory_order_release);
                 }
             }
-        });
+
+            if (m_benchmark_mode) {
+                run_benchmark_iteration();
+            }
+
+            ////////////////////////////
+            // displacement & physics //
+            ////////////////////////////
+
+            // static terrain mesh generation
+            const auto start_mesh = std::chrono::high_resolution_clock::now();
+            const auto chains = m_sand_world.mesh_world_parallel();
+            const auto end_mesh = std::chrono::high_resolution_clock::now();
+            
+            // step sand simulation
+            m_sand_world.update();
+
+            {
+                std::lock_guard<std::mutex> lock(m_physics_mutex);
+
+                // extract rigidbody pixels (remove from world)
+                m_rigidbody_manager.extract_all(m_sand_world);
+                
+                // update static terrain mesh for physics
+                const auto start_update = std::chrono::high_resolution_clock::now();
+                m_physics_world->update_terrain_mesh(chains);
+                const auto end_update = std::chrono::high_resolution_clock::now();
+                
+                // update counters
+                g_rigidbody_count.store(static_cast<i32>(m_physics_world->get_dynamic_body_count()), std::memory_order_release);
+                g_static_mesh_count.store(m_physics_world->get_terrain_shape_count(), std::memory_order_release);
+                
+                // step physics (FIXED STEP)
+                // TODO: see if varying step might be better?
+                m_physics_world->step(1.0f / 60.0f);
+                
+                const u64 debris_count = m_physics_world->debris_count();
+                
+                // restore rigidbody pixels & handle displacement
+                // manual iteration to get body info for "top ejection"
+                for (const auto& [id, info] : m_rigidbody_manager.get_bodies()) {
+                    if (!b2Body_IsValid(info.body_id)) {
+                        continue;
+                    }
+                    
+                    // restore pixels for this body
+                    const auto displaced = m_rigidbody_manager.restore_body_pixels(id, m_sand_world);
+                    
+                    // Calculate spawn height
+                    const b2Transform xf = b2Body_GetTransform(info.body_id);
+                    const f32 hx = info.width * 0.5f;
+                    const f32 hy = info.height * 0.5f;
+                    const b2Vec2 corners[4] = {{-hx, -hy}, {hx, -hy}, {hx, hy}, {-hx, hy}};
+
+                    f32 min_y = 1e9f;
+                    for(i32 i = 0; i < 4; ++i) {
+                        const b2Vec2 v = b2TransformPoint(xf, corners[i]);
+                        if(v.y < min_y) {
+                            min_y = v.y;
+                        }
+                    }
+
+                    const f32 top_y = min_y - (2.0f / PIXELS_PER_METER);
+                    
+                    // create debris for displaced particles
+                    for (const auto& [px, py, type] : displaced) {
+                        f32 vx = (fast_rand() % 100 - 50) / 25.0f; // soft spread (+/- 2.0)
+                        f32 vy = -1.0f - (fast_rand() % 50) / 25.0f; // soft upward pop (-1.0 to -3.0)
+                        
+                        // spawn at pixel's X, but Body's Top Y
+                        m_physics_world->create_debris(px / PIXELS_PER_METER, top_y, vx, vy,type);
+                    }
+                }
+                
+                // update debris (settling)
+                m_physics_world->update_debris(m_sand_world);
+                
+                auto mesh_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_mesh - start_mesh).count();
+                auto update_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_update - start_update).count();
+                
+                g_stat_mesh_ms.store(static_cast<i32>(mesh_ms), std::memory_order_relaxed);
+                g_stat_update_ms.store(static_cast<i32>(update_ms), std::memory_order_relaxed);
+                g_stat_debris_count.store(static_cast<i32>(debris_count), std::memory_order_relaxed);
+                g_stat_chains.store(static_cast<i32>(chains.size()), std::memory_order_relaxed);
+            }
+            ////////////////////////////
+
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_sps_update).count();
+            if (elapsed >= 1000) {
+                u64 steps_this_period = g_sim_step_count.load() - last_step_count;
+                g_sim_sps.store(static_cast<f32>(steps_this_period) * 1000.0f / static_cast<f32>(elapsed), std::memory_order_release);
+                last_step_count = g_sim_step_count.load();
+                last_sps_update = now;
+            }
+        }
     }
 
     void stop_simulation_thread() {
-        m_sim_running.store(false, std::memory_order_release);
+        g_sim_running.store(false, std::memory_order_release);
 
         // wake thread if waiting
         {
             std::lock_guard<std::mutex> lock(m_step_mutex);
-            m_steps_remaining.store(1, std::memory_order_release);
+            g_steps_remaining.store(1, std::memory_order_release);
         }
 
         m_step_cv.notify_one();
@@ -208,12 +322,8 @@ public:
             paint(m_mouse_x, m_mouse_y);
         }
 
-        // update SPS
-        m_main_scene.m_sim_sps = m_current_sps.load(std::memory_order_acquire);
-
-        bool was_fixed = m_fixed_steps_mode.load(std::memory_order_acquire);
-        bool is_fixed = m_main_scene.m_fixed_steps_mode;
-        m_fixed_steps_mode.store(is_fixed, std::memory_order_release);
+        static bool was_fixed = false;
+        bool is_fixed = g_fixed_steps_mode.load(std::memory_order_acquire);
         
         // fixed step mode
         if (is_fixed) {
@@ -221,7 +331,7 @@ public:
             if (rate > 0) { // steps per frame
                 {
                     std::lock_guard<std::mutex> lock(m_step_mutex);
-                    m_steps_remaining.store(rate, std::memory_order_release);
+                    g_steps_remaining.store(rate, std::memory_order_release);
                 }
                 m_step_cv.notify_one();
             } else { // 1 step every -rate frames
@@ -230,7 +340,7 @@ public:
                     m_frame_counter = 0;
                     {
                         std::lock_guard<std::mutex> lock(m_step_mutex);
-                        m_steps_remaining.store(1, std::memory_order_release);
+                        g_steps_remaining.store(1, std::memory_order_release);
                     }
                     m_step_cv.notify_one();
                 }
@@ -241,8 +351,13 @@ public:
                 m_step_cv.notify_one(); // wake up thread
             }
         }
+        was_fixed = is_fixed;
         
-        m_sand_world.renderToTexture(m_sand_world_texture);
+        // prevent rendering while sand is extracted
+        if (m_sand_world_texture) {
+            std::lock_guard<std::mutex> lock(m_physics_mutex);
+            m_sand_world.renderToTexture(m_sand_world_texture);
+        }
     }
 
     SDL_AppResult handle_downstream_event(SDL_Event* event) override {
@@ -292,7 +407,39 @@ public:
 
             case SDL_EVENT_KEY_DOWN: {
                 if (event->key.key == SDLK_R) {
+                    std::lock_guard<std::mutex> lock(m_physics_mutex);
                     m_sand_world.clear();
+                    m_rigidbody_manager.clear();
+                    m_physics_world->reset();
+                }
+                
+                // B = spawn crate (box)
+                if (event->key.key == SDLK_B) {
+                    std::lock_guard<std::mutex> lock(m_physics_mutex);
+                    
+                    b2Vec2 world_pos = m_main_scene.m_camera.screenToWorld({m_mouse_x, m_mouse_y});
+                    
+                    // bounds in meters
+                    const f32 max_w = m_sand_world.width() / PIXELS_PER_METER;
+                    const f32 max_h = m_sand_world.height() / PIXELS_PER_METER;
+                    
+                    // box size in meters
+                    const f32 box_size = 1.0f;
+                    const f32 half_size = box_size * 0.5f;
+                    
+                    world_pos.x = std::clamp(world_pos.x, half_size + 0.1f, max_w - half_size - 0.1f);
+                    world_pos.y = std::clamp(world_pos.y, half_size + 0.1f, max_h - half_size - 0.1f);
+                    
+                    // create physics body
+                    b2BodyId bodyId = m_physics_world->create_box(world_pos.x, world_pos.y, box_size, box_size);
+                    
+                    // register with manager to track pixels
+                    m_rigidbody_manager.register_body(bodyId, box_size, box_size, ParticleID::WOOD);
+                }
+
+                // D = toggle debug draw
+                if (event->key.key == SDLK_D) {
+                    m_debug_draw = !m_debug_draw;
                 }
                 // E = temporary eraser mode (hold)
                 if (event->key.key == SDLK_E && !m_eraser_mode) {
@@ -324,17 +471,11 @@ public:
     void paint(f32 screen_x, f32 screen_y) {
         const b2Vec2 world_pos = m_main_scene.m_camera.screenToWorld({screen_x, screen_y});
         
-        const f32 size_w = m_sand_world.width() / PIXELS_PER_METER * m_sand_pixel_size;
-        const f32 size_h = m_sand_world.height() / PIXELS_PER_METER * m_sand_pixel_size;
+        const f32 size_w = static_cast<f32>(m_sand_world.width()) / PIXELS_PER_METER;
+        const f32 size_h = static_cast<f32>(m_sand_world.height()) / PIXELS_PER_METER;
         
-        // world position to texture pixel coords
-        // World coords: center of texture at (0,0), extends from -size/2 to +size/2
-        // Texture coords: (0,0) at top-left, (width-1, height-1) at bottom-right
-        const f32 tex_x_f = (world_pos.x / size_w + 0.5f) * m_sand_world.width();
-        const f32 tex_y_f = (world_pos.y / size_h + 0.5f) * m_sand_world.height();
-        
-        const i32 center_x = static_cast<i32>(tex_x_f);
-        const i32 center_y = static_cast<i32>(tex_y_f);
+        const i32 center_x = static_cast<i32>(world_pos.x * PIXELS_PER_METER);
+        const i32 center_y = static_cast<i32>(world_pos.y * PIXELS_PER_METER);
         
         const i32 brush_radius = m_main_scene.m_brush_size - 1;  // size 1 = radius 0 = single pixel
         const ParticleID particle = static_cast<ParticleID>(m_main_scene.m_selected_particle);
@@ -363,16 +504,11 @@ public:
     SDL_Texture* m_sand_world_texture = nullptr;
 
     SandWorld<7, 5> m_sand_world;
-    const u32 m_sand_pixel_size = 4;
 
     // Simulation thread
     std::thread m_sim_thread;
-    std::atomic<bool> m_sim_running{false};
-    std::atomic<f32> m_current_sps{0.0f};
 
     // Fixed steps mode synchronization
-    std::atomic<bool> m_fixed_steps_mode{false};
-    std::atomic<i32> m_steps_remaining{0};
     i32 m_frame_counter{0};  // Counts frames for slowdown mode
     std::mutex m_step_mutex;
     std::condition_variable m_step_cv;
@@ -381,4 +517,11 @@ public:
     bool m_benchmark_mode = false;
     u32 m_benchmark_iterations = 0;
     std::atomic<u32> m_benchmark_current_iteration{0};
+    
+    // Physics
+    std::unique_ptr<PhysicsWorld> m_physics_world;
+    RigidbodyManager m_rigidbody_manager;
+    ThreadPool m_mesh_thread_pool;
+    std::mutex m_physics_mutex;
+    bool m_debug_draw = false;
 };

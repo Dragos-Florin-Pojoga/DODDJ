@@ -16,12 +16,12 @@ class Scene {
 public:
     Scene(std::string name = "Scene")
     : m_name(std::move(name)) {
-        b2WorldDef worldDef = b2DefaultWorldDef();
-        worldDef.gravity = b2Vec2(0.0f, 9.8f); // Positive DOWN
-        m_physics_world_id = b2CreateWorld(&worldDef);
+        // b2WorldDef worldDef = b2DefaultWorldDef();
+        // worldDef.gravity = b2Vec2(0.0f, 9.8f); // Positive DOWN
+        // m_physics_world_id = b2CreateWorld(&worldDef);
     }
     ~Scene() {
-        b2DestroyWorld(m_physics_world_id);
+        // b2DestroyWorld(m_physics_world_id);
     }
 
     const std::string& name() const { return m_name; }
@@ -31,7 +31,7 @@ public:
         // for (f32 acc = dt; acc >= m_physics_time_step; acc -= m_physics_time_step) {
         //     b2World_Step(m_physics_world_id, m_physics_time_step, m_physics_substep_count);
         // }
-        b2World_Step(m_physics_world_id, dt, m_physics_substep_count);
+        // b2World_Step(m_physics_world_id, dt, m_physics_substep_count);
         m_camera.update(dt);
     }
 
@@ -46,7 +46,7 @@ public:
     std::string m_name;
     EntityManager m_entities;
 
-    b2WorldId m_physics_world_id;
+    // b2WorldId m_physics_world_id;
     Camera m_camera;
 
     std::unique_ptr<RenderSystem> m_renderer = std::make_unique<RenderSystem>(m_transforms, m_renderables);
